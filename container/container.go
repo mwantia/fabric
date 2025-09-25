@@ -53,6 +53,11 @@ func Register[T any](sc *ServiceContainer, opts ...RegistrationOption) error {
 		}
 	}
 
+	// If no factory is provided and the type has fabric tags, use fabric tag factory
+	if options.Factory == nil && hasFabricTags[T]() {
+		options.Factory = createFabricTagFactory[T]()
+	}
+
 	key := typeKey[T]()
 	maps, exists := sc.services[key]
 	if exists {

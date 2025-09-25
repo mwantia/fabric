@@ -55,6 +55,7 @@ func main() {
 ## Features
 
 - **Type Safety**: Compile-time type checking with Go generics
+- **Fabric Tags**: Automatic dependency injection using struct tags
 - **Singleton Support**: Register services as singletons or transient instances
 - **Named Services**: Register multiple implementations with different names
 - **Middleware Support**: Process services during resolution
@@ -62,6 +63,52 @@ func main() {
 - **Context Support**: Full context.Context integration
 
 ## Usage Examples
+
+### Fabric Tags (Automatic Injection)
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "github.com/mwantia/fabric/container"
+)
+
+type LoggerService struct {
+    Name string
+}
+
+type EncryptService struct {
+    Algorithm string
+}
+
+// Services are automatically injected using fabric tags
+type StorageService struct {
+    Logger  *LoggerService  `fabric:"inject"`
+    Encrypt *EncryptService `fabric:"inject"`
+}
+
+func main() {
+    sc := container.NewContainer()
+    ctx := context.Background()
+
+    // Register dependencies
+    container.Register[*LoggerService](sc,
+        container.WithInstance(&LoggerService{Name: "FileLogger"}))
+
+    container.Register[*EncryptService](sc,
+        container.WithInstance(&EncryptService{Algorithm: "AES256"}))
+
+    // Register StorageService - fabric tags are auto-detected
+    container.Register[*StorageService](sc, container.AsSingleton())
+
+    // Dependencies are automatically injected
+    storage, _ := container.Resolve[*StorageService](ctx, sc)
+    fmt.Println(storage.Logger.Name)    // Output: FileLogger
+    fmt.Println(storage.Encrypt.Algorithm) // Output: AES256
+}
+```
 
 ### Basic Registration
 
