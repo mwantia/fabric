@@ -8,6 +8,10 @@
 *.so
 *.dylib
 
+# Remove any AI created files and/or documentations from the repository
+.claude
+CLAUDE.md
+
 # Test binary, built with `go test -c`
 *.test
 
@@ -29,4 +33,5 @@ go.work.sum
 
 # Editor/IDE
 # .idea/
-# .vscode/
+.vscode/
+.code-workspace
