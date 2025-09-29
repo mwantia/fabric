@@ -1,8 +1,16 @@
-# Fabric
+# Fabric - Type-Safe Dependency Injection for Go
 
-A type-safe dependency injection container for Go applications.
+Fabric is a lightweight, type-safe dependency injection container for Go applications. It leverages Go generics to provide compile-time type safety while supporting advanced features like automatic dependency injection via struct tags, lifecycle management, and middleware processing.
 
-⚠️ **Active Development**: This library is currently under active development. APIs may change before the first stable release.
+## Features
+
+- **Type-Safe**: Uses Go generics for compile-time type checking
+- **Automatic Injection**: Fabric tags (`fabric:"inject"`) for automatic dependency injection
+- **Flexible Registration**: Support for singletons, factories, instances, and interface mappings
+- **Named Services**: Register multiple implementations with different names
+- **Lifecycle Management**: Automatic initialization and cleanup of services
+- **Middleware Support**: Process services during resolution
+- **Thread-Safe**: Concurrent-safe operations for production use
 
 ## Installation
 
@@ -17,159 +25,169 @@ package main
 
 import (
     "context"
-    "fmt"
+    "log"
     "github.com/mwantia/fabric/container"
 )
 
-type UserService struct {
-    name string
+// Define your services
+type Logger interface {
+    Log(message string)
 }
 
-func (u *UserService) GetUser() string {
-    return u.name
+type ConsoleLogger struct{}
+
+func (c *ConsoleLogger) Log(message string) {
+    log.Println(message)
 }
 
 func main() {
-    // Create a new container
-    sc := container.NewContainer()
+    // Create container
+    sc := container.NewServiceContainer()
+    defer sc.Cleanup(context.Background())
 
-    // Register a service with a factory
-    container.Register[*UserService](sc,
-        container.WithConstructor(func(ctx context.Context, sc *container.ServiceContainer) (*UserService, error) {
-            return &UserService{name: "John Doe"}, nil
-        }),
-        container.AsSingleton(),
-    )
+    // Register services
+    container.Register[*ConsoleLogger](sc, container.With[Logger]())
 
-    // Resolve the service
-    ctx := context.Background()
-    userService, err := container.Resolve[*UserService](ctx, sc)
+    // Resolve and use
+    logger, err := container.Resolve[Logger](context.Background(), sc)
     if err != nil {
-        panic(err)
+        log.Fatal(err)
     }
 
-    fmt.Println(userService.GetUser()) // Output: John Doe
+    logger.Log("Hello, Fabric!")
 }
 ```
 
-## Features
+## Core Concepts
 
-- **Type Safety**: Compile-time type checking with Go generics
-- **Fabric Tags**: Automatic dependency injection using struct tags
-- **Singleton Support**: Register services as singletons or transient instances
-- **Named Services**: Register multiple implementations with different names
-- **Middleware Support**: Process services during resolution
-- **Lifecycle Management**: Automatic cleanup of resources
-- **Context Support**: Full context.Context integration
+### Service Registration
 
-## Usage Examples
-
-### Fabric Tags (Automatic Injection)
+Register services with various options:
 
 ```go
-package main
+// Basic registration with automatic construction
+container.Register[*LoggerService](sc)
 
-import (
-    "context"
-    "fmt"
-    "github.com/mwantia/fabric/container"
-)
-
-type LoggerService struct {
-    Name string
-}
-
-type EncryptService struct {
-    Algorithm string
-}
-
-// Services are automatically injected using fabric tags
-type StorageService struct {
-    Logger  *LoggerService  `fabric:"inject"`
-    Encrypt *EncryptService `fabric:"inject"`
-}
-
-func main() {
-    sc := container.NewContainer()
-    ctx := context.Background()
-
-    // Register dependencies
-    container.Register[*LoggerService](sc,
-        container.WithInstance(&LoggerService{Name: "FileLogger"}))
-
-    container.Register[*EncryptService](sc,
-        container.WithInstance(&EncryptService{Algorithm: "AES256"}))
-
-    // Register StorageService - fabric tags are auto-detected
-    container.Register[*StorageService](sc, container.AsSingleton())
-
-    // Dependencies are automatically injected
-    storage, _ := container.Resolve[*StorageService](ctx, sc)
-    fmt.Println(storage.Logger.Name)    // Output: FileLogger
-    fmt.Println(storage.Encrypt.Algorithm) // Output: AES256
-}
-```
-
-### Basic Registration
-
-```go
-// Register with instance
-container.Register[string](sc, container.WithInstance("hello world"))
-
-// Register with factory
-container.Register[*Database](sc,
-    container.WithFactory(func(ctx context.Context, sc *container.ServiceContainer) (any, error) {
-        return &Database{connectionString: "localhost:5432"}, nil
-    }),
-)
-
-// Register as singleton
-container.Register[*Logger](sc,
-    container.WithConstructor(newLogger),
+// Singleton with interface mapping
+container.Register[*DatabaseService](sc,
     container.AsSingleton(),
-)
+    container.With[Database]())
+
+// Custom factory function
+container.Register[*ConfigService](sc,
+    container.AsFactory(func(ctx context.Context, sc *container.ServiceContainer) (any, error) {
+        return &ConfigService{DatabaseURL: "localhost:5432"}, nil
+    }))
+
+// Pre-created instance
+config := &Config{DatabaseURL: "localhost:5432"}
+container.Register[*Config](sc, container.WithInstance(config))
+```
+
+### Service Resolution
+
+Resolve services by type or name:
+
+```go
+// Resolve by interface
+logger, err := container.Resolve[Logger](ctx, sc)
+
+// Resolve by concrete type
+service, err := container.Resolve[*LoggerService](ctx, sc)
+
+// Resolve named service
+pgDB, err := container.ResolveName[Database](ctx, sc, "postgres")
+
+// Resolve into existing variable
+var logger Logger
+err := container.ResolveAs[Logger](ctx, sc, &logger)
 ```
 
 ### Named Services
 
+Register multiple implementations of the same interface:
+
 ```go
-// Register multiple implementations
-container.Register[Database](sc,
-    container.WithName("postgres"),
-    container.WithConstructor(newPostgresDB),
-)
+// Register multiple database implementations
+container.Register[*PostgresDB](sc, container.WithName[Database]("postgres"))
+container.Register[*MySQLDB](sc, container.WithName[Database]("mysql"))
 
-container.Register[Database](sc,
-    container.WithName("mysql"),
-    container.WithConstructor(newMySQLDB),
-)
-
-// Resolve by name
+// Resolve specific implementation
 pgDB, err := container.ResolveName[Database](ctx, sc, "postgres")
+myDB, err := container.ResolveName[Database](ctx, sc, "mysql")
 ```
 
-### Resolution
+## Usage Examples
+
+### Fabric Tags (Automatic Dependency Injection)
+
+Use struct tags for automatic dependency injection:
 
 ```go
-// Direct resolution
-service, err := container.Resolve[*MyService](ctx, sc)
+type UserService struct {
+    Logger   Logger   `fabric:"inject"`           // Unnamed injection
+    Database Database `fabric:"inject"`           // Unnamed injection
+    Cache    Database `fabric:"inject:redis"`     // Named injection
+    Queue    Database `fabric:"inject:rabbitmq"`  // Named injection
+}
 
-// Resolution with pointer assignment
-var service *MyService
-err := container.ResolveAs[*MyService](ctx, sc, &service)
+// Register the service - dependencies will be automatically resolved
+container.Register[*UserService](sc)
 
-// Named resolution with pointer assignment
-err := container.ResolveNameAs[Database](ctx, sc, "postgres", &db)
+// Dependencies are injected automatically during creation
+userService, err := container.Resolve[*UserService](ctx, sc)
 ```
 
-### Cleanup
+The fabric tags support two formats:
+- `fabric:"inject"` - Resolves by type without a name
+- `fabric:"inject:name"` - Resolves by type with the specified name
+
+### Lifecycle Management
+
+Services can implement `LifecycleService` for automatic initialization and cleanup:
 
 ```go
-defer func() {
-    if err := sc.Cleanup(context.Background()); err != nil {
-        log.Printf("Cleanup error: %v", err)
+type DatabaseService struct {
+    Connection *sql.DB
+}
+
+func (ds *DatabaseService) Init(ctx context.Context) error {
+    var err error
+    ds.Connection, err = sql.Open("postgres", "connection_string")
+    return err
+}
+
+func (ds *DatabaseService) Cleanup(ctx context.Context) error {
+    if ds.Connection != nil {
+        return ds.Connection.Close()
     }
-}()
+    return nil
+}
+
+// Register normally - Init/Cleanup called automatically
+container.Register[*DatabaseService](sc, container.AsSingleton())
+
+// Init called during first resolution
+db, err := container.Resolve[*DatabaseService](ctx, sc)
+
+// Cleanup called during container cleanup
+defer sc.Cleanup(ctx)
+```
+
+### Middleware
+
+Process services during resolution:
+
+```go
+type LoggingMiddleware struct{}
+
+func (lm *LoggingMiddleware) Process(ctx context.Context, serviceType reflect.Type, instance any) (any, error) {
+    log.Printf("Resolved service: %v", serviceType)
+    return instance, nil
+}
+
+// Register middleware
+sc.AddMiddleware(&LoggingMiddleware{})
 ```
 
 ## Registration Options
@@ -177,25 +195,60 @@ defer func() {
 | Option | Description |
 |--------|-------------|
 | `WithInstance(instance)` | Register a pre-created instance |
-| `WithFactory(factory)` | Register with a factory function |
-| `WithConstructor[T](ctor)` | Register with a type-safe constructor |
-| `WithName(name)` | Register with a specific name |
+| `AsFactory(factory)` | Register with a factory function |
+| `With[I]()` | Map service to interface I |
+| `WithName[I](name)` | Map service to named interface I |
 | `AsSingleton()` | Register as singleton (default: transient) |
+
+## Advanced Usage
+
+### Custom Tag Processors
+
+Create custom tag processors for specialized dependency injection:
+
+```go
+type ConfigTagProcessor struct{}
+
+func (ctp *ConfigTagProcessor) GetPriority() int { return 100 }
+func (ctp *ConfigTagProcessor) CanProcess(value string) bool { return value == "config" }
+
+func (ctp *ConfigTagProcessor) Process(ctx context.Context, sc *container.ServiceContainer, field reflect.StructField, value string) (any, error) {
+    // Custom logic for config injection
+    return resolveConfig(field.Name)
+}
+
+// Register custom processor
+sc.AddTagProcessor(&ConfigTagProcessor{})
+
+// Use in structs
+type Service struct {
+    DatabaseURL string `fabric:"config"`
+}
+```
+
+## Best Practices
+
+1. **Use Interfaces**: Register services with interface mappings for better abstraction
+2. **Lifecycle Management**: Implement `LifecycleService` for services that need initialization/cleanup
+3. **Singleton Pattern**: Use `AsSingleton()` for expensive-to-create services
+4. **Named Services**: Use named registration when you need multiple implementations
+5. **Error Handling**: Always check errors from registration and resolution operations
+6. **Container Cleanup**: Always call `Cleanup()` in your main function or service shutdown
+
+## API Documentation
+
+For complete API documentation, run:
+
+```bash
+go doc github.com/mwantia/fabric/container
+```
+
+Or visit the online documentation at [pkg.go.dev](https://pkg.go.dev/github.com/mwantia/fabric/container).
 
 ## Contributing
 
-Contributions are welcome! Please:
-
-1. Fork the repository
-2. Create a feature branch
-3. Add tests for new functionality
-4. Ensure all tests pass
-5. Submit a pull request
-
-## Author
-
-Created by [mwantia](https://github.com/mwantia)
+Contributions are welcome! Please read our [Contributing Guide](CONTRIBUTING.md) for details on our code of conduct and development process.
 
 ## License
 
-This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
